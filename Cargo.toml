@@ -1,0 +1,9 @@
+[package]
+name = "quick-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tui = { version = "0.16", features = ["crossterm"] }
+crossterm = "0.26"
+dirs = "4.0"
