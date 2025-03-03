@@ -3,11 +3,9 @@
 Quick-CLI is a terminal tool for managing QuickEMU VMs.
 
 ## Features 🛠️
-- List available QuickEMU VMs
 - Start, stop, and connect to VMs with ease
 - Detect running VMs and show connection status
 - Support for Remmina and SPICE connections
-- Simple keyboard navigation
 
 ## Installation ⚙️
 Make sure you have Rust installed. Then, clone the repository and build the project:
