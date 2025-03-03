@@ -1,9 +1,9 @@
 # Quick-CLI 🚀
 
-Quick-CLI is a terminal tool for managing QuickEMU VMs.
+Quick-CLI is a terminal tool for managing Quickemu VMs.
 
 ## Features 🛠️
-- Start, stop, and connect to VMs with ease
+- Start, stop, and connect to VMs
 - Detect running VMs and show connection status
 - Support for Remmina and SPICE connections
 
