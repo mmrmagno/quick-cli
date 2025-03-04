@@ -229,35 +229,51 @@ fn is_vm_running(vm_conf: &Path, config: &Config) -> bool {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Remmina Profile Override and Selection
+// Remmina Profile Override and Auto-Detection
 ///////////////////////////////////////////////////////////////////////////////
 
 /// Returns a Remmina profile for the given VM.
-/// First, it checks for an override mapping (exact match on the VM config’s stem, lowercase).
-/// If found, that path is returned. Otherwise, it scans the default Remmina directory.
+/// First checks for an override mapping (exact match on the VM config’s stem, lowercase).
+/// If not found, scans the default Remmina directory for files whose stem contains the VM stem.
+/// If there is exactly one match or an exact match, that is returned.
 fn remmina_profile_for_vm(vm_conf: &Path, config: &Config) -> Option<PathBuf> {
     let vm_stem = vm_conf.file_stem()?.to_string_lossy().to_lowercase();
+    // Check for explicit override.
     if let Some(override_path) = config.remmina_overrides.get(&vm_stem) {
         return Some(PathBuf::from(override_path));
     }
+    // Auto-detect: scan Remmina directory.
     let home = dirs::home_dir()?;
     let remmina_dir = home.join(".local/share/remmina");
+    let mut matches = Vec::new();
     if let Ok(entries) = fs::read_dir(remmina_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "remmina" {
-                        let profile_stem = path.file_stem()?.to_string_lossy().to_lowercase();
-                        if profile_stem == vm_stem || profile_stem.contains(&vm_stem) {
-                            return Some(path);
+                        if let Some(stem) = path.file_stem() {
+                            let profile_stem = stem.to_string_lossy().to_lowercase();
+                            if profile_stem.contains(&vm_stem) {
+                                matches.push(path);
+                            }
                         }
                     }
                 }
             }
         }
     }
-    None
+    if matches.len() == 1 {
+        return Some(matches.remove(0));
+    }
+    for m in &matches {
+        if let Some(stem) = m.file_stem() {
+            if stem.to_string_lossy().to_lowercase() == vm_stem {
+                return Some(m.clone());
+            }
+        }
+    }
+    matches.into_iter().next()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -305,14 +321,27 @@ fn start_vm(vm_conf: &Path, config: &Config, logs: &Arc<Mutex<Vec<String>>>) {
         });
 }
 
-/// First, if an override exists (for SPICE) launch Remmina with that profile and return immediately.
-/// Otherwise, use the normal fallback chain.
+/// Force a SPICE connection regardless of protocol.
+fn force_spice_connect(vm_conf: &Path, config: &Config, logs: &Arc<Mutex<Vec<String>>>) {
+    let spice_port = config.default_spice_port;
+    if config.os_type == "windows" {
+        connect_spice_windows(spice_port, vm_conf, config, logs);
+    } else if config.os_type == "macos" {
+        connect_spice_macos(spice_port, vm_conf, config, logs);
+    } else {
+        connect_spice_linux(spice_port, vm_conf, config, logs);
+    }
+}
+
+/// Connect to the VM.
+/// First, if an override or auto-detected Remmina profile exists, launch Remmina with it
+/// (using the "-c" flag) and return immediately.
+/// Otherwise, use protocol-specific connection.
 fn connect_vm(vm_conf: &Path, config: &Config, logs: &Arc<Mutex<Vec<String>>>) {
-    // If an override exists, use it regardless of the protocol.
     if let Some(profile_path) = remmina_profile_for_vm(vm_conf, config) {
         let mut l = logs.lock().unwrap();
         l.push(format!(
-            "Override found for {}. Launching Remmina with override profile: {}",
+            "Profile found for {}. Launching Remmina with profile: {}",
             vm_conf.display(),
             profile_path.display()
         ));
@@ -329,11 +358,10 @@ fn connect_vm(vm_conf: &Path, config: &Config, logs: &Arc<Mutex<Vec<String>>>) {
             return;
         } else {
             let mut l = logs.lock().unwrap();
-            l.push("Failed to launch override Remmina profile; falling back to normal connection.".into());
+            l.push("Failed to launch Remmina with profile; falling back to normal connection.".into());
             drop(l);
         }
     }
-    // No override; use normal protocol-specific connection.
     let _ = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
     let vm_name = vm_conf.file_stem().unwrap().to_string_lossy();
     match parse_vm_config(vm_conf, config) {
@@ -768,6 +796,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Span::raw(" | "),
                 Span::styled("[c] Connect running", Style::default().fg(Color::Yellow)),
                 Span::raw(" | "),
+                Span::styled("[v] Force Spice Connect", Style::default().fg(Color::Yellow)),
+                Span::raw(" | "),
                 Span::styled("[s] Stop", Style::default().fg(Color::Yellow)),
                 Span::raw(" | "),
                 Span::styled("[j/k] Navigate", Style::default().fg(Color::Yellow)),
@@ -819,6 +849,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 let mut l = app.logs.lock().unwrap();
                                 l.push(format!("VM {} is not running; cannot connect.", vm_conf.display()));
                             }
+                        }
+                    }
+                    KeyCode::Char('v') => {
+                        if let Some(i) = app.list_state.selected() {
+                            let vm_conf = &app.vm_list[i];
+                            let mut l = app.logs.lock().unwrap();
+                            l.push(format!("Force SPICE connect for {}.", vm_conf.display()));
+                            drop(l);
+                            force_spice_connect(vm_conf, &config, &app.logs);
                         }
                     }
                     KeyCode::Char('s') => {
